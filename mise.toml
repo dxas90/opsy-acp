@@ -1,0 +1,30 @@
+[tools]
+python = { version = "3.14" }
+uv = "0.11.3"
+
+[settings]
+experimental = true
+python.uv_venv_auto = "create|source"
+
+[env]
+PROJECT_NAME = "{{ config_root | basename }}"
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"
+_.python.venv = { path = ".venv", create = true }
+LC_ALL = "en_US.UTF-8"
+LC_CTYPE = "en_US.UTF-8"
+ANTHROPIC_BASE_URL = "http://localhost:6655/anthropic/"
+OPENAI_API_BASE = "http://localhost:6655/openai/v1"
+OPENAI_MODEL_NAME= "gpt-5"
+
+[tasks.install]
+run = "uv sync --all-extras"
+
+[tasks.test]
+depends = ["install"]
+run = "uv run pytest"
+
+[tasks.lint]
+run = "uv run ruff check ."
+
+[tasks.fmt]
+run = "uv run ruff format ."
