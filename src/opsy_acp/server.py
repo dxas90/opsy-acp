@@ -110,7 +110,7 @@ _OLLAMA_MODELS: list[dict[str, str]] = [
 
 # Combined list served to ACP clients; extend either provider list above to
 # make new models available without touching serve logic.
-_AVAILABLE_MODELS: list[dict[str, str]] = _ANTHROPIC_MODELS + _OPENAI_MODELS + _OLLAMA_MODELS
+_AVAILABLE_MODELS: list[dict[str, str]] = _ANTHROPIC_MODELS # + _OPENAI_MODELS + _OLLAMA_MODELS
 
 _DEFAULT_MODE_ID: str = "accept_edits"  # mode used for new sessions before the user changes it
 
