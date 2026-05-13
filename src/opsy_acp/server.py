@@ -1476,7 +1476,7 @@ async def _serve_agent() -> None:
             modes=modes,
             models=_AVAILABLE_MODELS,
         )
-        await run_acp_agent(acp_agent)
+        await run_acp_agent(acp_agent, use_unstable_protocol=True)
 
 
 def default_agent() -> None:
