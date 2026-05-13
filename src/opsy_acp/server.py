@@ -49,10 +49,20 @@ from acp import (
     run_agent as run_acp_agent,
 )
 from acp.schema import (
+    AgentCapabilities,
+    CloseSessionResponse,
     HttpMcpServer,
+    InitializeResponse,
+    ListSessionsResponse,
     McpServerStdio,
+    ResumeSessionResponse,
+    SessionCapabilities,
+    SessionCloseCapabilities,
+    SessionInfo,
+    SessionListCapabilities,
     SessionMode,
     SessionModeState,
+    SessionResumeCapabilities,
     SseMcpServer,
 )
 from deepagents import create_deep_agent
@@ -1155,16 +1165,19 @@ class MCPAwareAgentServer(AgentServerACP):
     sync factory via ``MCPSessionContext``.
     """
 
-    def __init__(self, global_mcp_connections: dict[str, Any], **kwargs: Any) -> None:
+    def __init__(self, global_mcp_connections: dict[str, Any], checkpointer: Any, **kwargs: Any) -> None:
         """Initialise with the pre-discovered global MCP connection map.
 
         Args:
             global_mcp_connections: Connections loaded from local tool configs
                 at startup (Claude Code, VS Code, Zed, Cursor, etc.).
+            checkpointer: The SQLite checkpointer used by agents, needed to
+                enumerate existing sessions for ``session/list``.
             **kwargs: Forwarded to ``AgentServerACP.__init__``.
         """
         super().__init__(**kwargs)
         self._global_mcp_connections = global_mcp_connections
+        self._checkpointer = checkpointer
         # Maps session_id -> tools already fetched for that session.
         self._session_mcp_tools: dict[str, list[Any]] = {}
 
@@ -1239,6 +1252,111 @@ class MCPAwareAgentServer(AgentServerACP):
         tools = await self._load_mcp_tools(session_id, mcp_servers)
         self._session_mcp_tools[session_id] = tools
         return response
+
+    async def initialize(self, **kwargs: Any) -> InitializeResponse:  # type: ignore[override]
+        """Return server capabilities including session/resume, session/close, session/list."""
+        response = await super().initialize(**kwargs)
+        response.agent_capabilities = AgentCapabilities(
+            prompt_capabilities=response.agent_capabilities.prompt_capabilities
+            if response.agent_capabilities
+            else None,
+            session_capabilities=SessionCapabilities(
+                resume=SessionResumeCapabilities(),
+                close=SessionCloseCapabilities(),
+                list=SessionListCapabilities(),
+            ),
+        )
+        return response
+
+    async def resume_session(  # type: ignore[override]
+        self,
+        cwd: str,
+        session_id: str,
+        mcp_servers: list[MCPServerDescriptor] | None = None,
+        **kwargs: Any,
+    ) -> ResumeSessionResponse:
+        """Reconnect to an existing session without replaying message history.
+
+        Restores the session's working directory, mode, and model, then
+        re-loads MCP tools so the agent is ready to receive new prompts.
+        """
+        logger.info("Resuming session %s (cwd=%s)", session_id, cwd)
+
+        # Restore session state so _reset_agent builds the right agent.
+        self._session_cwds[session_id] = cwd
+
+        if self._modes is not None and session_id not in self._session_modes:
+            self._session_modes[session_id] = self._modes.current_mode_id
+            self._session_mode_states[session_id] = self._modes
+
+        if self._models is not None and session_id not in self._session_models and self._models:
+            self._session_models[session_id] = self._models[0]["value"]
+
+        tools = await self._load_mcp_tools(session_id, mcp_servers)
+        self._session_mcp_tools[session_id] = tools
+        self._reset_agent(session_id)
+
+        config_options = None
+        if self._modes is not None or self._models is not None:
+            config_options = self._build_config_options(session_id)
+
+        return ResumeSessionResponse(config_options=config_options)
+
+    async def close_session(  # type: ignore[override]
+        self, session_id: str, **kwargs: Any
+    ) -> CloseSessionResponse:
+        """Cancel ongoing work and release all resources for the session."""
+        logger.info("Closing session %s", session_id)
+        for store in (
+            self._session_cwds,
+            self._session_modes,
+            self._session_mode_states,
+            self._session_models,
+            self._session_mcp_tools,
+            self._session_plans,
+            self._allowed_command_types,
+        ):
+            store.pop(session_id, None)  # type: ignore[union-attr]
+        return CloseSessionResponse()
+
+    async def list_sessions(  # type: ignore[override]
+        self,
+        cwd: str | None = None,
+        cursor: str | None = None,
+        **kwargs: Any,
+    ) -> ListSessionsResponse:
+        """Return the list of persisted sessions from the SQLite checkpointer.
+
+        Each unique thread_id in the checkpoint store becomes a ``SessionInfo``
+        entry.  The ``cwd`` filter is applied when stored (sessions record their
+        working directory in the checkpoint config).
+        """
+        seen: set[str] = set()
+        sessions: list[SessionInfo] = []
+
+        try:
+            async for tup in self._checkpointer.alist(None):
+                thread_id: str | None = (tup.config.get("configurable") or {}).get("thread_id")
+                if not thread_id or thread_id in seen:
+                    continue
+                seen.add(thread_id)
+
+                session_cwd = self._session_cwds.get(thread_id, "")
+                if cwd and session_cwd and session_cwd != cwd:
+                    continue
+
+                ts = tup.checkpoint.get("ts") if tup.checkpoint else None
+                sessions.append(
+                    SessionInfo(
+                        session_id=thread_id,
+                        cwd=session_cwd or cwd or "",
+                        updated_at=ts,
+                    )
+                )
+        except Exception:
+            logger.warning("list_sessions: failed to enumerate checkpoints", exc_info=False)
+
+        return ListSessionsResponse(sessions=sessions)
 
     def _reset_agent(self, session_id: str) -> None:  # type: ignore[override]
         """Re-create the agent synchronously using pre-loaded MCP tools."""
@@ -1353,6 +1471,7 @@ async def _serve_agent() -> None:
 
         acp_agent = MCPAwareAgentServer(  # type: ignore[abstract]  # satisfies abstract methods via ACP metaclass
             global_mcp_connections=global_mcp_connections,
+            checkpointer=checkpointer,
             agent=build_agent,
             modes=modes,
             models=_AVAILABLE_MODELS,
