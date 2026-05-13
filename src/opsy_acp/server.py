@@ -1103,6 +1103,56 @@ class MCPSessionContext(AgentSessionContext):
         object.__setattr__(self, "mcp_tools", mcp_tools or [])
 
 
+def _sanitize_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Recursively ensure object-type schemas have a 'properties' field.
+
+    OpenAI's API rejects object schemas that are missing 'properties', while
+    Anthropic accepts them.  This normalisation makes MCP tools compatible with
+    both providers.
+    """
+    if not isinstance(schema, dict):
+        return schema
+    if schema.get("type") == "object" and "properties" not in schema:
+        schema = {**schema, "properties": {}}
+    return {
+        k: (
+            _sanitize_tool_schema(v)
+            if isinstance(v, dict)
+            else [_sanitize_tool_schema(i) if isinstance(i, dict) else i for i in v]
+            if isinstance(v, list)
+            else v
+        )
+        for k, v in schema.items()
+    }
+
+
+def _sanitize_mcp_tool(tool: Any) -> Any:
+    """Patch a LangChain MCP tool's args_schema so it passes OpenAI schema validation.
+
+    Monkey-patches ``model_json_schema`` on the tool's args_schema class to
+    return a sanitized copy rather than rebuilding the Pydantic model, which
+    avoids fragile model reconstruction while keeping the fix lightweight.
+    """
+    try:
+        if tool.args_schema is None:
+            return tool
+        raw = tool.args_schema.model_json_schema()
+        sanitized = _sanitize_tool_schema(raw)
+        if sanitized == raw:
+            return tool
+        original_cls = tool.args_schema
+
+        class _PatchedSchema(original_cls):  # type: ignore[valid-type,misc]
+            @classmethod
+            def model_json_schema(cls, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
+                return sanitized
+
+        tool.args_schema = _PatchedSchema
+        return tool
+    except Exception:
+        return tool
+
+
 class MCPAwareAgentServer(AgentServerACP):
     """``AgentServerACP`` subclass that loads MCP tools and injects them into the agent factory.
 
@@ -1164,6 +1214,7 @@ class MCPAwareAgentServer(AgentServerACP):
         for name, conn in connections.items():
             try:
                 tools = await MultiServerMCPClient({name: conn}).get_tools()
+                tools = [_sanitize_mcp_tool(t) for t in tools]
                 logger.debug("Session %s: %s → %d tool(s)", session_id, name, len(tools))
                 all_tools.extend(tools)
             except Exception:
