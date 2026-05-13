@@ -106,7 +106,6 @@ _OPENAI_MODELS: list[dict[str, str]] = [
 
 _OLLAMA_MODELS: list[dict[str, str]] = [
     {"value": "ollama:qwen3.6:27b", "name": "Qwen3.6"},
-    {"value": "ollama:qwen2.5-coder:7b-instruct-q4_K_M", "name": "Qwen2.5-coder"},
 ]
 
 # Combined list served to ACP clients; extend either provider list above to
@@ -1129,25 +1128,18 @@ def _sanitize_tool_schema(schema: dict[str, Any]) -> dict[str, Any]:
 def _sanitize_mcp_tool(tool: Any) -> Any:
     """Patch a LangChain MCP tool's args_schema so it passes OpenAI schema validation.
 
-    Monkey-patches ``model_json_schema`` on the tool's args_schema class to
-    return a sanitized copy rather than rebuilding the Pydantic model, which
-    avoids fragile model reconstruction while keeping the fix lightweight.
+    MCP tools from langchain-mcp-adapters store their input schema as a raw dict
+    in ``args_schema``.  When that dict describes an ``object`` without a
+    ``properties`` key, OpenAI's API rejects it.  This function replaces the dict
+    with a sanitized copy that adds ``properties: {}`` wherever needed.
     """
     try:
         if tool.args_schema is None:
             return tool
-        raw = tool.args_schema.model_json_schema()
-        sanitized = _sanitize_tool_schema(raw)
-        if sanitized == raw:
-            return tool
-        original_cls = tool.args_schema
-
-        class _PatchedSchema(original_cls):  # type: ignore[valid-type,misc]
-            @classmethod
-            def model_json_schema(cls, **kwargs: Any) -> dict[str, Any]:  # type: ignore[override]
-                return sanitized
-
-        tool.args_schema = _PatchedSchema
+        if isinstance(tool.args_schema, dict):
+            sanitized = _sanitize_tool_schema(tool.args_schema)
+            if sanitized is not tool.args_schema:
+                tool.args_schema = sanitized
         return tool
     except Exception:
         return tool
