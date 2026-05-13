@@ -29,11 +29,11 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -86,7 +86,7 @@ __all__ = [
     "MCPAwareAgentServer",
     "MCPSessionContext",
     "build_detect_script",
-    "main",
+    "default_agent",
 ]
 
 logger = logging.getLogger(__name__)
@@ -106,6 +106,7 @@ _OPENAI_MODELS: list[dict[str, str]] = [
 
 _OLLAMA_MODELS: list[dict[str, str]] = [
     {"value": "ollama:qwen3.6:27b", "name": "Qwen3.6"},
+    {"value": "ollama:qwen2.5-coder:7b-instruct-q4_K_M", "name": "Qwen2.5-coder"},
 ]
 
 # Combined list served to ACP clients; extend either provider list above to
@@ -527,7 +528,7 @@ class LocalContextMiddleware(AgentMiddleware):
         if not self._project_dir:
             return
         try:
-            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            ts = datetime.now(timezone.UTC).strftime("%Y-%m-%d %H:%M UTC")
             content = f"<!-- opsy: last refreshed {ts} -->\n\n{output}\n"
             (self._project_dir / "context.md").write_text(content, encoding="utf-8")
             logger.debug("Saved local context snapshot to %s", self._project_dir)
@@ -544,8 +545,7 @@ class LocalContextMiddleware(AgentMiddleware):
             result = self.backend.execute(DETECT_CONTEXT_SCRIPT)
         except Exception:
             logger.warning(
-                "Local context detection failed (backend: %s); context will "
-                "be omitted from system prompt",
+                "Local context detection failed (backend: %s); context will be omitted from system prompt",
                 type(self.backend).__name__,
                 exc_info=True,
             )
@@ -972,9 +972,7 @@ def _parse_server_entry(name: str, entry: dict[str, Any]) -> dict[str, Any] | No
         return None
 
     raw_headers = entry.get("headers") or {}
-    headers = (
-        {k: _expand_env_vars(str(v)) for k, v in raw_headers.items()} if raw_headers else None
-    )
+    headers = {k: _expand_env_vars(str(v)) for k, v in raw_headers.items()} if raw_headers else None
 
     if server_type in ("sse",):
         return {
@@ -1319,7 +1317,7 @@ async def _serve_agent() -> None:
         await run_acp_agent(acp_agent)
 
 
-def main() -> None:
+def default_agent() -> None:
     """Configure logging and run the ACP agent server."""
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
@@ -1330,4 +1328,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    default_agent()
