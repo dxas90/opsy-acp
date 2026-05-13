@@ -7,7 +7,7 @@ packages = ["src/opsy_acp"]
 
 [project]
 name = "opsy-acp"
-version = "0.1.0"
+version = "0.1.1"
 description = "ACP coding agent with local context injection and MCP server support"
 readme = "README.md"
 license = { text = "MIT" }
@@ -29,7 +29,7 @@ dev = [
 ]
 
 [project.scripts]
-opsy-acp = "opsy_acp.server:main"
+opsy-acp = "opsy_acp.server:default_agent"
 
 [tool.ruff]
 line-length = 120
@@ -41,4 +41,3 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-

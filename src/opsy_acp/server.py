@@ -528,7 +528,7 @@ class LocalContextMiddleware(AgentMiddleware):
         if not self._project_dir:
             return
         try:
-            ts = datetime.now(timezone.UTC).strftime("%Y-%m-%d %H:%M UTC")
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             content = f"<!-- opsy: last refreshed {ts} -->\n\n{output}\n"
             (self._project_dir / "context.md").write_text(content, encoding="utf-8")
             logger.debug("Saved local context snapshot to %s", self._project_dir)
