@@ -20,7 +20,7 @@ An [ACP](https://github.com/i-am-bee/acp) coding agent with automatic local-cont
 ### From GitHub (recommended)
 
 ```sh
-uv tool install git+https://github.com/danielramirez/opsy-acp
+uv tool install git+https://github.com/dxas90/opsy-acp
 ```
 
 After that, `opsy-acp` is available globally:
@@ -32,7 +32,7 @@ opsy-acp
 ### Local development
 
 ```sh
-git clone https://github.com/danielramirez/opsy-acp
+git clone https://github.com/dxas90/opsy-acp
 cd opsy-acp
 uv sync
 uv run opsy-acp
