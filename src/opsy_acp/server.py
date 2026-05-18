@@ -47,6 +47,9 @@ from typing import (
 
 from acp import (
     run_agent as run_acp_agent,
+    text_block,
+    update_agent_message,
+    update_user_message,
 )
 from acp.schema import (
     AgentCapabilities,
@@ -54,6 +57,7 @@ from acp.schema import (
     HttpMcpServer,
     InitializeResponse,
     ListSessionsResponse,
+    LoadSessionResponse,
     McpServerStdio,
     ResumeSessionResponse,
     SessionCapabilities,
@@ -1254,12 +1258,13 @@ class MCPAwareAgentServer(AgentServerACP):
         return response
 
     async def initialize(self, **kwargs: Any) -> InitializeResponse:  # type: ignore[override]
-        """Return server capabilities including session/resume, session/close, session/list."""
+        """Return server capabilities including session/resume, session/close, session/list, session/load."""
         response = await super().initialize(**kwargs)
         response.agent_capabilities = AgentCapabilities(
             prompt_capabilities=response.agent_capabilities.prompt_capabilities
             if response.agent_capabilities
             else None,
+            load_session=True,
             session_capabilities=SessionCapabilities(
                 resume=SessionResumeCapabilities(),
                 close=SessionCloseCapabilities(),
@@ -1301,6 +1306,77 @@ class MCPAwareAgentServer(AgentServerACP):
             config_options = self._build_config_options(session_id)
 
         return ResumeSessionResponse(config_options=config_options)
+
+    async def load_session(  # type: ignore[override]
+        self,
+        cwd: str,
+        session_id: str,
+        mcp_servers: list[MCPServerDescriptor] | None = None,
+        **kwargs: Any,
+    ) -> LoadSessionResponse:
+        """Resume a session AND replay its message history to the client.
+
+        This is session/resume + sending each stored message back as a
+        session/update notification so the editor can reconstruct the UI.
+        Only HumanMessage and AIMessage entries are replayed; tool calls and
+        system messages are skipped as they have no meaningful display.
+        """
+        logger.info("Loading session %s (cwd=%s)", session_id, cwd)
+
+        # First do the same setup as resume_session.
+        self._session_cwds[session_id] = cwd
+
+        if self._modes is not None and session_id not in self._session_modes:
+            self._session_modes[session_id] = self._modes.current_mode_id
+            self._session_mode_states[session_id] = self._modes
+
+        if self._models is not None and session_id not in self._session_models and self._models:
+            self._session_models[session_id] = self._models[0]["value"]
+
+        tools = await self._load_mcp_tools(session_id, mcp_servers)
+        self._session_mcp_tools[session_id] = tools
+        self._reset_agent(session_id)
+
+        # Replay message history to the client via session/update notifications.
+        try:
+            config = {"configurable": {"thread_id": session_id}}
+            checkpoint_tuple = await self._checkpointer.aget_tuple(config)
+            if checkpoint_tuple is not None:
+                messages = (checkpoint_tuple.checkpoint.get("channel_values") or {}).get(
+                    "messages", []
+                )
+                for msg in messages:
+                    msg_type = getattr(msg, "type", None) or getattr(msg, "role", None)
+                    content = msg.content if hasattr(msg, "content") else ""
+                    if not content:
+                        continue
+                    text = content if isinstance(content, str) else (
+                        " ".join(
+                            part.get("text", "") if isinstance(part, dict) else str(part)
+                            for part in content
+                        )
+                    )
+                    if not text.strip():
+                        continue
+                    if msg_type in ("human", "user"):
+                        update = update_user_message(text_block(text))
+                    elif msg_type in ("ai", "assistant"):
+                        update = update_agent_message(text_block(text))
+                    else:
+                        continue
+                    await self._conn.session_update(
+                        session_id=session_id, update=update, source="DeepAgent"
+                    )
+        except Exception:
+            logger.warning(
+                "load_session %s: failed to replay message history", session_id, exc_info=False
+            )
+
+        config_options = None
+        if self._modes is not None or self._models is not None:
+            config_options = self._build_config_options(session_id)
+
+        return LoadSessionResponse(config_options=config_options)
 
     async def close_session(  # type: ignore[override]
         self, session_id: str, **kwargs: Any
