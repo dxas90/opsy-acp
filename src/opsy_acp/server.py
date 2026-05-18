@@ -1346,35 +1346,35 @@ class MCPAwareAgentServer(AgentServerACP):
         self._reset_agent(session_id)
 
         # Replay message history to the client via session/update notifications.
+        # Messages are stored as pending writes in the SQLite DB, not in channel_values.
+        # aget_state() reconstructs the full agent state by replaying all writes.
         try:
             config = {"configurable": {"thread_id": session_id}}
-            checkpoint_tuple = await self._checkpointer.aget_tuple(config)
-            if checkpoint_tuple is not None:
-                messages = (checkpoint_tuple.checkpoint.get("channel_values") or {}).get(
-                    "messages", []
+            state = await self._agent.aget_state(config)
+            messages = (state.values or {}).get("messages", [])
+            for msg in messages:
+                msg_type = getattr(msg, "type", None) or getattr(msg, "role", None)
+                content = msg.content if hasattr(msg, "content") else ""
+                if not content:
+                    continue
+                text = content if isinstance(content, str) else (
+                    " ".join(
+                        part.get("text", "") if isinstance(part, dict) else str(part)
+                        for part in content
+                        if isinstance(part, (str, dict))
+                    )
                 )
-                for msg in messages:
-                    msg_type = getattr(msg, "type", None) or getattr(msg, "role", None)
-                    content = msg.content if hasattr(msg, "content") else ""
-                    if not content:
-                        continue
-                    text = content if isinstance(content, str) else (
-                        " ".join(
-                            part.get("text", "") if isinstance(part, dict) else str(part)
-                            for part in content
-                        )
-                    )
-                    if not text.strip():
-                        continue
-                    if msg_type in ("human", "user"):
-                        update = update_user_message(text_block(text))
-                    elif msg_type in ("ai", "assistant"):
-                        update = update_agent_message(text_block(text))
-                    else:
-                        continue
-                    await self._conn.session_update(
-                        session_id=session_id, update=update, source="DeepAgent"
-                    )
+                if not text.strip():
+                    continue
+                if msg_type in ("human", "user"):
+                    update = update_user_message(text_block(text))
+                elif msg_type in ("ai", "assistant"):
+                    update = update_agent_message(text_block(text))
+                else:
+                    continue
+                await self._conn.session_update(
+                    session_id=session_id, update=update, source="DeepAgent"
+                )
         except Exception:
             logger.warning(
                 "load_session %s: failed to replay message history", session_id, exc_info=False
