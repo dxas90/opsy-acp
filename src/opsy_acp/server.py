@@ -1067,13 +1067,21 @@ def _parse_zed_format(raw: dict[str, Any]) -> dict[str, Any]:
             continue
 
         cmd_block = entry.get("command", {})
-        command = cmd_block.get("path", cmd_block.get("command", ""))
+        if isinstance(cmd_block, str):
+            # Flat format: {"command": "npx", "args": [...]}
+            command = _expand_env_vars(cmd_block)
+            args = [_expand_env_vars(a) for a in entry.get("args", [])]
+        elif isinstance(cmd_block, dict):
+            # Nested format: {"command": {"path": "uvx", "args": [...]}}
+            command = _expand_env_vars(cmd_block.get("path", cmd_block.get("command", "")))
+            args = [_expand_env_vars(a) for a in cmd_block.get("args", [])]
+        else:
+            continue
         if not command:
             continue
-        args = [_expand_env_vars(a) for a in cmd_block.get("args", [])]
         connections[name] = {
             "transport": "stdio",
-            "command": _expand_env_vars(command),
+            "command": command,
             "args": args,
         }
     return connections
