@@ -120,8 +120,8 @@ _OPENAI_MODELS: list[dict[str, str]] = [
 ]
 
 _OLLAMA_MODELS: list[dict[str, str]] = [
-    {"value": "ollama:qwen2.5-coder:7b-instruct", "name": "Qwen2.5 coder"},
-    {"value": "ollama:qwen3.6", "name": "Qwen3.6"},
+    {"value": "ollama:qwen2.5-coder:7b-instruct-q4_K_M", "name": "Qwen2.5 coder"},
+    {"value": "ollama:qwen3.6:27b", "name": "Qwen3.6"},
 ]
 
 # Combined list served to ACP clients; extend either provider list above to
