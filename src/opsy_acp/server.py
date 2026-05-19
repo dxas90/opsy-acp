@@ -81,6 +81,7 @@ from langchain.agents.middleware.types import (
     ModelResponse,
     PrivateStateAttr,
 )
+from langchain.chat_models import init_chat_model
 from langchain_core.messages import SystemMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -1540,9 +1541,16 @@ async def _serve_agent() -> None:
                 else []
             )
 
+            model_arg: str | Any = context.model or ""
+            if isinstance(model_arg, str) and model_arg.startswith("ollama:"):
+                # Ollama thinking models emit raw JSON tool calls as text instead of
+                # invoking tools when reasoning is enabled (the default for e.g. qwen3).
+                # Force reasoning=False so tool calls are executed properly.
+                model_arg = init_chat_model(model_arg, reasoning=False)
+
             return create_deep_agent(
                 # Falls back to Deep Agent default model if not provided.
-                model=context.model,
+                model=model_arg or None,
                 tools=mcp_tools or None,
                 checkpointer=checkpointer,
                 backend=backend,
