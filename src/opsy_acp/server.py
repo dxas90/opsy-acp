@@ -120,8 +120,7 @@ _OPENAI_MODELS: list[dict[str, str]] = [
 ]
 
 _OLLAMA_MODELS: list[dict[str, str]] = [
-    {"value": "ollama:phi4-mini", "name": "Phi-4-mini"},
-    {"value": "ollama:qwen2.5-coder", "name": "Qwen2.5 coder"},
+    {"value": "ollama:qwen2.5-coder:7b-instruct", "name": "Qwen2.5 coder"},
     {"value": "ollama:qwen3.6", "name": "Qwen3.6"},
 ]
 
